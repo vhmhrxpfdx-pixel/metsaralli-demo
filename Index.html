@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Metsäralli (Demo)</title>
+  <style>
+    :root { --pad: 14px; --radius: 14px; }
+    html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#0b1a12;color:#fff;}
+    .app{max-width:980px;margin:0 auto;padding:calc(var(--pad) + env(safe-area-inset-top)) var(--pad) calc(var(--pad) + env(safe-area-inset-bottom));}
+    h1{font-size:20px;margin:0 0 10px;}
+    .card{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:var(--radius);padding:var(--pad);backdrop-filter: blur(8px);}
+
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .row > *{flex:1 1 220px}
+
+    label{display:block;font-size:13px;opacity:.9;margin:10px 0 6px;}
+    input,select,button{
+      width:100%;padding:12px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);
+      background:rgba(0,0,0,.25);color:#fff;font-size:16px;outline:none;
+    }
+    button{cursor:pointer;background:rgba(255,255,255,.12)}
+    button.primary{background:rgba(30, 200, 120, .25);border-color:rgba(30,200,120,.45)}
+    button.danger{background:rgba(255, 80, 80, .18);border-color:rgba(255,80,80,.35)}
+    button:disabled{opacity:.55;cursor:not-allowed}
+
+    .gameTop{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    .pill{padding:8px 10px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);font-size:13px}
+    .boardWrap{margin-top:12px}
+    canvas{width:100%;height:auto;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:#173d2a;display:block}
+
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
+    .modal{max-width:520px;width:100%}
+    .qTitle{font-size:18px;margin:0 0 8px}
+    .choices{display:grid;gap:10px;margin-top:12px}
+    .choices button{text-align:left}
+    .muted{opacity:.85;font-size:13px}
+    .hr{height:1px;background:rgba(255,255,255,.12);margin:12px 0}
+    .statsList{display:grid;gap:8px}
+    .statRow{display:flex;justify-content:space-between;gap:10px;font-size:14px}
+    .small{font-size:12px;opacity:.85}
+  </style>
+</head>
+<body>
+<div class="app">
+  <h1>🌲 Metsäralli (demo)</h1>
+
+  <!-- SETUP -->
+  <div id="setup" class="card">
+    <div class="row">
+      <div>
+        <label>Pelaajien määrä</label>
+        <select id="playerCount">
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4" selected>4</option>
+        </select>
+      </div>
+      <div>
+        <label>Valitse eläimet (järjestys radoilla)</label>
+        <div class="small">Vakio: 🦊 kettu, 🐻 karhu, 🐺 susi, 🦌 hirvi</div>
+      </div>
+    </div>
+
+    <div id="nameInputs" class="row"></div>
+
+    <div class="row" style="margin-top:12px">
+      <button id="startBtn" class="primary">Aloita peli</button>
+      <button id="clearStatsBtn" class="danger">Nollaa tilastot</button>
+    </div>
+
+    <div class="hr"></div>
+    <div class="muted">Vinkki iPhonessa: kun avaat tämän Safarissa, valitse <b>Jaa</b> → <b>Lisää Koti-valikkoon</b>.</div>
+  </div>
+
+  <!-- GAME -->
+  <div id="game" class="card" style="display:none">
+    <div class="gameTop">
+      <div class="pill" id="turnPill">Vuoro: -</div>
+      <div class="pill" id="scorePill">Oikein: -</div>
+      <div class="pill" id="winPill" style="display:none">🏁 Voittaja: -</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="askBtn" class="primary">Kysy kysymys</button>
+        <button id="newGameBtn">Uusi peli</button>
+      </div>
+    </div>
+
+    <div class="boardWrap">
+      <canvas id="board" width="980" height="420"></canvas>
+      <div class="small" style="margin-top:8px;opacity:.9">
+        Oikea vastaus = eläin liikkuu yhden askeleen. Ensimmäinen joka pääsee rannalle voittaa.
+      </div>
+    </div>
+
+    <div class="hr"></div>
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="muted"><b>Tilastot (tallentuu tähän laitteeseen)</b></div>
+        <div class="small">voitot + oikein</div>
+      </div>
+      <div id="stats" class="statsList" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- QUESTION MODAL -->
+<div id="modalBack" class="modalBack">
+  <div class="card modal">
+    <div class="qTitle" id="qText">Kysymys</div>
+    <div class="muted" id="qHint">Valitse vastaus</div>
+    <div class="choices" id="choices"></div>
+    <div class="hr"></div>
+    <button id="closeModalBtn">Sulje</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- Data ----------
+  const animals = [
+    { key:"fox",  name:"Kettu", emoji:"🦊" },
+    { key:"bear", name:"Karhu", emoji:"🐻" },
+    { key:"wolf", name:"Susi",  emoji:"🐺" },
+    { key:"moose",name:"Hirvi", emoji:"🦌" }
+  ];
+
+  // 4–7v luontoaiheiset, helppoja
+  const questions = [
+    { q:"Mikä näistä on eläin?", a:["Kivi","Karhu","Pilvi"], correct:1 },
+    { q:"Missä orava asuu useimmiten?", a:["Puussa","Jääkaapissa","Autossa"], correct:0 },
+    { q:"Mitä hirvi syö?", a:["Lehtiä ja versoja","Karkkia","Muovia"], correct:0 },
+    { q:"Mikä näistä on puu?", a:["Koivu","Kenkä","Lautanen"], correct:0 },
+    { q:"Onko susi villieläin?", a:["Kyllä","Ei"], correct:0 },
+    { q:"Mikä vuodenaika on yleensä kylmin Suomessa?", a:["Talvi","Kesä","Syksy"], correct:0 },
+    { q:"Mitä kasvit tarvitsevat kasvaakseen?", a:["Valoa ja vettä","Kivipalloja","Suklaata"], correct:0 },
+    { q:"Mikä eläin nukkuu talvella pitkään?", a:["Karhu","Lokki","Hauki"], correct:0 },
+    { q:"Mikä näistä kuuluu metsään?", a:["Muurahainen","Tiskiharja","Jääkiekko"], correct:0 },
+    { q:"Miten lintu liikkuu usein?", a:["Lentää","Ajaa pyörällä","Ui laavassa"], correct:0 },
+    { q:"Mikä näistä on veden äärellä?", a:["Järvi","Sohva","Karkkikauppa"], correct:0 },
+    { q:"Mikä eläin on iso ja sillä on sarvet?", a:["Hirvi","Kissa","Etana"], correct:0 },
+  ];
+
+  // ---------- Elements ----------
+  const setupEl = document.getElementById("setup");
+  const gameEl = document.getElementById("game");
+  const nameInputsEl = document.getElementById("nameInputs");
+  const playerCountEl = document.getElementById("playerCount");
+  const startBtn = document.getElementById("startBtn");
+  const newGameBtn = document.getElementById("newGameBtn");
+  const askBtn = document.getElementById("askBtn");
+  const clearStatsBtn = document.getElementById("clearStatsBtn");
+
+  const turnPill = document.getElementById("turnPill");
+  const scorePill = document.getElementById("scorePill");
+  const winPill = document.getElementById("winPill");
+
+  const statsEl = document.getElementById("stats");
+
+  const modalBack = document.getElementById("modalBack");
+  const qText = document.getElementById("qText");
+  const qHint = document.getElementById("qHint");
+  const choicesEl = document.getElementById("choices");
+  const closeModalBtn = document.getElementById("closeModalBtn");
+
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+
+  // ---------- State ----------
+  let players = [];
+  let current = 0;
+  let finished = false;
+
+  const laneCount = 4;
+  const stepsToWin = 12;          // kuinka monta askelta rannalle
+  const leftPad = 70;
+  const rightPad = 70;
+
+  function loadStats() {
+    try { return JSON.parse(localStorage.getItem("metsaralli_stats") || "{}"); }
+    catch { return {}; }
+  }
+  function saveStats(stats) {
+    localStorage.setItem("metsaralli_stats", JSON.stringify(stats));
+  }
+  function bumpStat(name, field, delta=1) {
+    const stats = loadStats();
+    if (!stats[name]) stats[name] = { wins:0, correct:0 };
+    stats[name][field] = (stats[name][field] || 0) + delta;
+    saveStats(stats);
+    renderStats();
+  }
+  function renderStats() {
+    const stats = loadStats();
+    const entries = Object.entries(stats).sort((a,b) => (b[1].wins - a[1].wins) || (b[1].correct - a[1].correct));
+    statsEl.innerHTML = "";
+    if (entries.length === 0) {
+      statsEl.innerHTML = `<div class="small">Ei tilastoja vielä.</div>`;
+      return;
+    }
+    for (const [name, s] of entries) {
+      const row = document.createElement("div");
+      row.className = "statRow";
+      row.innerHTML = `<div>${escapeHtml(name)}</div><div>🏆 ${s.wins || 0} &nbsp; ✅ ${s.correct || 0}</div>`;
+      statsEl.appendChild(row);
+    }
+  }
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  }
+
+  // ---------- UI Setup ----------
+  function rebuildNameInputs() {
+    const n = parseInt(playerCountEl.value, 10);
+    nameInputsEl.innerHTML = "";
+    for (let i=0;i<n;i++){
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `
+        <label>Pelaaja ${i+1} nimi</label>
+        <input id="pname_${i}" placeholder="Esim. Aada" value="${["Aada","Eeli","Mila","Nooa"][i] || ""}">
+      `;
+      nameInputsEl.appendChild(wrap);
+    }
+  }
+  playerCountEl.addEventListener("change", rebuildNameInputs);
+  rebuildNameInputs();
+
+  // ---------- Game ----------
+  function startGame() {
+    const n = parseInt(playerCountEl.value, 10);
+    players = [];
+    for (let i=0;i<n;i++){
+      const val = document.getElementById(`pname_${i}`).value.trim() || `Pelaaja ${i+1}`;
+      players.push({
+        name: val,
+        animal: animals[i],   // 1:1 ensimmäiset eläimet
+        lane: i,
+        step: 0,
+        correct: 0
+      });
+    }
+    current = 0;
+    finished = false;
+    winPill.style.display = "none";
+    askBtn.disabled = false;
+
+    setupEl.style.display = "none";
+    gameEl.style.display = "block";
+    updateTop();
+    draw();
+    renderStats();
+  }
+
+  function newGame() {
+    gameEl.style.display = "none";
+    setupEl.style.display = "block";
+  }
+
+  function updateTop() {
+    const p = players[current];
+    turnPill.textContent = `Vuoro: ${p.animal.emoji} ${p.name}`;
+    scorePill.textContent = `Oikein: ${p.correct}`;
+  }
+
+  function nextTurn() {
+    current = (current + 1) % players.length;
+    updateTop();
+    draw();
+  }
+
+  function win(player) {
+    finished = true;
+    askBtn.disabled = true;
+    winPill.style.display = "inline-block";
+    winPill.textContent = `🏁 Voittaja: ${player.animal.emoji} ${player.name}`;
+    bumpStat(player.name, "wins", 1);
+  }
+
+  function askQuestion() {
+    if (finished) return;
+    const q = questions[Math.floor(Math.random() * questions.length)];
+    openModal(q);
+  }
+
+  function openModal(q) {
+    qText.textContent = q.q;
+    qHint.textContent = `Vuorossa: ${players[current].name}`;
+    choicesEl.innerHTML = "";
+
+    q.a.forEach((choice, idx) => {
+      const btn = document.createElement("button");
+      btn.textContent = choice;
+      btn.addEventListener("click", () => answerQuestion(q, idx));
+      choicesEl.appendChild(btn);
+    });
+
+    modalBack.style.display = "flex";
+  }
+
+  function closeModal() {
+    modalBack.style.display = "none";
+  }
+
+  function answerQuestion(q, selected) {
+    const p = players[current];
+    const correct = (selected === q.correct);
+
+    if (correct) {
+      p.step += 1;
+      p.correct += 1;
+      bumpStat(p.name, "correct", 1);
+
+      if (p.step >= stepsToWin) {
+        closeModal();
+        draw();
+        updateTop();
+        win(p);
+        return;
+      }
+    }
+
+    closeModal();
+    updateTop();
+    draw();
+    nextTurn();
+  }
+
+  // ---------- Drawing ----------
+  function draw() {
+    // scale for retina
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width));
+    const h = Math.floor(w * (420/980));
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    // background forest gradient-ish
+    ctx.clearRect(0,0,w,h);
+
+    // forest
+    ctx.fillStyle = "#123624";
+    ctx.fillRect(0,0,w,h);
+
+    // finish beach zone
+    const finishX = w - rightPad;
+    ctx.fillStyle = "#2b6d73"; // sea
+    ctx.fillRect(finishX, 0, rightPad, h);
+    ctx.fillStyle = "rgba(255,255,255,.6)";
+    ctx.fillRect(finishX, 0, 3, h);
+
+    // lanes
+    const laneH = h / laneCount;
+    for (let i=0;i<laneCount;i++){
+      const y = i*laneH;
+      // path
+      ctx.fillStyle = "rgba(210,180,140,.22)";
+      roundRect(ctx, leftPad-10, y + laneH*0.20, finishX - leftPad + 10, laneH*0.60, 14);
+      ctx.fill();
+
+      // subtle lane separators
+      ctx.strokeStyle = "rgba(255,255,255,.10)";
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+
+      // lane label (animal)
+      const a = animals[i];
+      ctx.font = "16px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial";
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.fillText(`${a.emoji} ${a.name}`, 14, y + 22);
+    }
+
+    // draw players (only as many as in game)
+    const stepLen = (finishX - leftPad) / stepsToWin;
+    players.forEach(p => {
+      const laneH = h / laneCount;
+      const yMid = p.lane*laneH + laneH*0.50;
+      const x = leftPad + p.step * stepLen;
+
+      // highlight current
+      if (!finished && players[current] === p) {
+        ctx.fillStyle = "rgba(255,255,255,.14)";
+        roundRect(ctx, 10, p.lane*laneH + 6, w-20, laneH-12, 14);
+        ctx.fill();
+      }
+
+      // animal emoji (bigger)
+      ctx.font = "34px Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif";
+      ctx.fillText(p.animal.emoji, x-10, yMid+12);
+
+      // name tag
+      ctx.font = "13px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial";
+      ctx.fillStyle = "rgba(255,255,255,.9)";
+      ctx.fillText(p.name, x+32, yMid+6);
+    });
+
+    // title text on beach
+    ctx.font = "14px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial";
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.save();
+    ctx.translate(finishX + 10, 18);
+    ctx.fillText("🏁 RANTA", 0, 0);
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr,y);
+    ctx.arcTo(x+w,y,x+w,y+h,rr);
+    ctx.arcTo(x+w,y+h,x,y+h,rr);
+    ctx.arcTo(x,y+h,x,y,rr);
+    ctx.arcTo(x,y,x+w,y,rr);
+    ctx.closePath();
+  }
+
+  // ---------- Events ----------
+  startBtn.addEventListener("click", startGame);
+  newGameBtn.addEventListener("click", newGame);
+  askBtn.addEventListener("click", askQuestion);
+  closeModalBtn.addEventListener("click", closeModal);
+  modalBack.addEventListener("click", (e) => { if (e.target === modalBack) closeModal(); });
+
+  clearStatsBtn.addEventListener("click", () => {
+    localStorage.removeItem("metsaralli_stats");
+    renderStats();
+    alert("Tilastot nollattu.");
+  });
+
+  window.addEventListener("resize", () => { if (gameEl.style.display !== "none") draw(); });
+
+  renderStats();
+})();
+</script>
+</body>
+</html>
